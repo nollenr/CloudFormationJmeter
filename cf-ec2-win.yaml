@@ -1,14 +1,30 @@
 Description: Create JMeter Instances in the CRDB VPC/Subnets
 AWSTemplateFormatVersion: '2010-09-09'
 
-# 2022 01 05 09 33:  Jmeter is being downloaded and unzipped into the correct directory (almost - the directory might be a little too deep).
+# Windows AMI:
+# ami-03e68166e462a9c52
+# Microsoft Windows Server 2019 Base
+# Microsoft Windows 2019 Datacenter edition. [English]
+
+# For info on PowerShell scripts in user-data
+# https://erudinsky.com/2017/09/27/aws-ec2-user-data-script-windows
 
 Parameters: 
   CRDBStackName:
     Type: String
     Default: "CRDB01"
     Description: Name of the Cockroach Stack.  This value is required to read output values from that stack to create resources in this stack.
-  InstanceType:
+  CreateWindowsEC2Instance:
+    Type: String
+    Default: true
+    Description: "true: Creates the windows JMeter instance to run the JMeter GUI, false: Does not create the Windows instance."
+    AllowedValues:
+    - true
+    - false
+  KeyPairName: 
+    Description: "Key Pair Name (specific to a region) to be used for the EC2 instances.  This keypair must already exist prior to runing this CloudFormation Template."
+    Type: "AWS::EC2::KeyPair::KeyName"
+  WindowsInstanceType:
     Type: String
     Default: t3a.medium
     Description: Instance type.   (Allowed values are in order by increasing price range).  m4.large is 2vCPU, 8GB priced as $0.1/hr.
@@ -60,10 +76,87 @@ Parameters:
     - c5d.2xlarge
     - c5d.4xlarge
     - c5d.9xlarge
+  LinuxInstanceType:
+    Type: String
+    Default: t3a.medium
+    Description: Instance type.   (Allowed values are in order by increasing price range).  m4.large is 2vCPU, 8GB priced as $0.1/hr.
+    AllowedValues:
+    - t2.micro
+    - t3a.small
+    - t3.small
+    - t3a.medium
+    - t3.medium
+    - t3a.large
+    - c5a.large
+    - t3.large
+    - c5.large
+    - c6i.large
+    - c5ad.large
+    - m5a.large
+    - m6a.large
+    - t2.large
+    - c5d.large
+    - m5.large
+    - m6i.large
+    - c4.large
+    - m4.large
+    - m5ad.large
+    - c5n.large
+    - m5d.large
+    - r5a.large
+    - m5n.large
+    - r5.large
+    - r6i.large
+    - c1.medium
+    - r5ad.large
+    - m3.large
+    - r4.large
+    - m5dn.large
+    - r5d.large
+    - r5b.large
+    - r5n.large
+    - t3a.xlarge
+    - c5a.xlarge
+    - i3.large
+    - m5zn.large
+    - r3.large
+    - t3.xlarge
+    - r5dn.large
+    - c5.xlarge
+    - c6i.xlarge
+    - c5ad.xlarge
+    - c5d.2xlarge
+    - c5d.4xlarge
+    - c5d.9xlarge
+Conditions: 
+  CreateWindowsEc2: !Equals [true, !Ref CreateWindowsEC2Instance]
 
 Resources:
-  JmeterWinIpNode01:
+  JmeterSecurityGroup01:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      Tags: 
+        - Key: Name
+          Value: sg03
+      GroupDescription: JMeter communication on port 1099
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-VPCID"
+  InstanceSecurityGroup02Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: JmeterSecurityGroup01
+    Properties: 
+      GroupId: !Ref JmeterSecurityGroup01
+      IpProtocol: tcp
+      FromPort: 1099
+      ToPort: 1099
+      SourceSecurityGroupId: !Ref JmeterSecurityGroup01
+      Description: "Intra Node JMeter Communication"
+
+  # Windows Network Interface
+  JmeterWinNiNode01:
     Type: AWS::EC2::NetworkInterface
+    Condition: CreateWindowsEc2
     Properties:
       SubnetId: 
         Fn::ImportValue:
@@ -75,17 +168,74 @@ Resources:
       - Key: Name
         Value: JmeterWinIpNode01
 
-  JmeterWinNode01:
-    DependsOn: 
-    - JmeterWinIpNode01    
-    Type: 'AWS::EC2::Instance'
+  # Controller Network Interface
+  JmeterControllerNiNode01:
+    Type: AWS::EC2::NetworkInterface
     Properties:
-      KeyName: "us-west-2-kp-02"
+      SubnetId: 
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-PubSubnet01"
+      GroupSet:
+        - !ImportValue
+          'Fn::Sub': "${CRDBStackName}-SecurityGroup1"
+      Tags:
+      - Key: Name
+        Value: JmeterControllerIpNode01
+  # Worker 1 Network Interface
+  JmeterWorkerNiNode01:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: 
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-PubSubnet01"
+      GroupSet:
+        - !ImportValue
+          'Fn::Sub': "${CRDBStackName}-SecurityGroup1"
+      Tags:
+      - Key: Name
+        Value: JmeterControllerIpNode01
+  # Worker 2 Network Interface
+  JmeterWorkerNiNode02:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: 
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-PubSubnet02"
+      GroupSet:
+        - !ImportValue
+          'Fn::Sub': "${CRDBStackName}-SecurityGroup1"
+      Tags:
+      - Key: Name
+        Value: JmeterControllerIpNode02
+  # Worker 3 Network Interface
+  JmeterWorkerNiNode03:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: 
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-PubSubnet03"
+      GroupSet:
+        - !ImportValue
+          'Fn::Sub': "${CRDBStackName}-SecurityGroup1"
+      Tags:
+      - Key: Name
+        Value: JmeterControllerIpNode01
+
+  JmeterWinNode01:
+    Type: 'AWS::EC2::Instance'
+    Condition: CreateWindowsEc2
+    DependsOn: 
+    - JmeterWinNiNode01    
+    Properties:
+      KeyName: !Ref KeyPairName
       Tags:
       - Key: Name
         Value: JMeter-Windows
-      InstanceType: !Ref InstanceType
+      InstanceType: !Ref WindowsInstanceType
       ImageId: ami-03e68166e462a9c52
+      NetworkInterfaces:
+      - DeviceIndex: '0'
+        NetworkInterfaceId: !Ref JmeterWinNiNode01
       UserData:
         Fn::Base64:
           !Sub |
@@ -135,7 +285,66 @@ Resources:
             # Start-Sleep -s $sleep
             # Remove-Item $temp -Force -Recurse
             </powershell>
+
+  JmeterControllerNode01:
+    DependsOn: 
+    - JmeterControllerNiNode01
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      KeyName: !Ref KeyPairName
+      Tags:
+      - Key: Name
+        Value: JMeter-Controller
+      InstanceType: !Ref LinuxInstanceType
+      ImageId: ami-00f7e5c52c0f43726
       NetworkInterfaces:
       - DeviceIndex: '0'
-        NetworkInterfaceId: !Ref JmeterWinIpNode01
+        NetworkInterfaceId: !Ref JmeterControllerNiNode01
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            yum install -y wget initscripts net-tools
+            yum install -y java
+            su ec2-user -lc 'wget http://mirrors.estointernet.in/apache//jmeter/binaries/apache-jmeter-5.4.1.tgz'
+            su ec2-user -lc 'tar -zxf apache-jmeter-5.4.1.tgz'
+            su ec2-user -lc 'ln -s apache-jmeter-5.4.1 $HOME/jmeter'
+            su ec2-user -lc 'echo "export JMETER_HOME=$HOME/jmeter" >> $HOME/.bashrc'
+            su ec2-user -lc 'echo "export PATH=$PATH:$JMETER_HOME/bin" >> $HOME/.bashrc'
+            su ec2-user -lc 'source .bashrc && curl -L https://jmeter-plugins.org/get/ > $HOME/jmeter/lib/ext/plugins-manager.jar'
+            su ec2-user -lc 'source .bashrc && curl -L https://repo1.maven.org/maven2/kg/apc/cmdrunner/2.2/cmdrunner-2.2.jar > $HOME/jmeter/lib/cmdrunner-2.2.jar'
+            su ec2-user -lc 'source .bashrc && java -cp $HOME/jmeter/lib/ext/plugins-manager.jar org.jmeterplugins.repository.PluginManagerCMDInstaller'
+            su ec2-user -lc 'source .bashrc && $HOME/jmeter/bin/PluginsManagerCMD.sh install jpgc-autostop,jpgc-casutg,jpgc-csl,jpgc-dummy,jpgc-ffw,jpgc-filterresults,jpgc-functions,jpgc-json,jpgc-mergeresults,jpgc-prmctl,jpgc-sense,jpgc-tst,jpgc-wsc'
+            echo "${}"
 
+https://stackoverflow.com/questions/48625737/userdata-script-with-resource-attribute-cloudformation
+
+  # JmeterWorkerNode01:
+  #   DependsOn: 
+  #   - JmeterWorkerNiNode01
+  #   Type: 'AWS::EC2::Instance'
+  #   Properties:
+  #     KeyName: !Ref KeyPairName
+  #     Tags:
+  #     - Key: Name
+  #       Value: JMeter-Controller
+  #     InstanceType: !Ref LinuxInstanceType
+  #     ImageId: ami-00f7e5c52c0f43726
+  #     NetworkInterfaces:
+  #     - DeviceIndex: '0'
+  #       NetworkInterfaceId: !Ref JmeterWorkerNiNode01
+  #     UserData:
+  #       Fn::Base64:
+  #         !Sub |
+  #           #!/bin/bash -xe
+  #           yum install -y wget initscripts net-tools
+  #           yum install -y java
+  #           su ec2-user -lc 'wget http://mirrors.estointernet.in/apache//jmeter/binaries/apache-jmeter-5.4.1.tgz'
+  #           su ec2-user -lc 'tar -zxf apache-jmeter-5.4.1.tgz'
+  #           su ec2-user -lc 'ln -s apache-jmeter-5.4.1 $HOME/jmeter'
+  #           su ec2-user -lc 'echo "export JMETER_HOME=$HOME/jmeter" >> $HOME/.bashrc'
+  #           su ec2-user -lc 'echo "export PATH=$PATH:$JMETER_HOME/bin" >> $HOME/.bashrc'
+  #           su ec2-user -lc 'source .bashrc && curl -L https://jmeter-plugins.org/get/ > $HOME/jmeter/lib/ext/plugins-manager.jar'
+  #           su ec2-user -lc 'source .bashrc && curl -L https://repo1.maven.org/maven2/kg/apc/cmdrunner/2.2/cmdrunner-2.2.jar > $HOME/jmeter/lib/cmdrunner-2.2.jar'
+  #           su ec2-user -lc 'source .bashrc && java -cp $HOME/jmeter/lib/ext/plugins-manager.jar org.jmeterplugins.repository.PluginManagerCMDInstaller'
+  #           su ec2-user -lc 'source .bashrc && $HOME/jmeter/bin/PluginsManagerCMD.sh install jpgc-autostop,jpgc-casutg,jpgc-csl,jpgc-dummy,jpgc-ffw,jpgc-filterresults,jpgc-functions,jpgc-json,jpgc-mergeresults,jpgc-prmctl,jpgc-sense,jpgc-tst,jpgc-wsc'
