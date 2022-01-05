@@ -1,0 +1,141 @@
+Description: Create JMeter Instances in the CRDB VPC/Subnets
+AWSTemplateFormatVersion: '2010-09-09'
+
+# 2022 01 05 09 33:  Jmeter is being downloaded and unzipped into the correct directory (almost - the directory might be a little too deep).
+
+Parameters: 
+  CRDBStackName:
+    Type: String
+    Default: "CRDB01"
+    Description: Name of the Cockroach Stack.  This value is required to read output values from that stack to create resources in this stack.
+  InstanceType:
+    Type: String
+    Default: t3a.medium
+    Description: Instance type.   (Allowed values are in order by increasing price range).  m4.large is 2vCPU, 8GB priced as $0.1/hr.
+    AllowedValues:
+    - t2.micro
+    - t3a.small
+    - t3.small
+    - t3a.medium
+    - t3.medium
+    - t3a.large
+    - c5a.large
+    - t3.large
+    - c5.large
+    - c6i.large
+    - c5ad.large
+    - m5a.large
+    - m6a.large
+    - t2.large
+    - c5d.large
+    - m5.large
+    - m6i.large
+    - c4.large
+    - m4.large
+    - m5ad.large
+    - c5n.large
+    - m5d.large
+    - r5a.large
+    - m5n.large
+    - r5.large
+    - r6i.large
+    - c1.medium
+    - r5ad.large
+    - m3.large
+    - r4.large
+    - m5dn.large
+    - r5d.large
+    - r5b.large
+    - r5n.large
+    - t3a.xlarge
+    - c5a.xlarge
+    - i3.large
+    - m5zn.large
+    - r3.large
+    - t3.xlarge
+    - r5dn.large
+    - c5.xlarge
+    - c6i.xlarge
+    - c5ad.xlarge
+    - c5d.2xlarge
+    - c5d.4xlarge
+    - c5d.9xlarge
+
+Resources:
+  JmeterWinIpNode01:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: 
+        Fn::ImportValue:
+          !Sub "${CRDBStackName}-PubSubnet01"
+      GroupSet:
+        - !ImportValue
+          'Fn::Sub': "${CRDBStackName}-SecurityGroup1"
+      Tags:
+      - Key: Name
+        Value: JmeterWinIpNode01
+
+  JmeterWinNode01:
+    DependsOn: 
+    - JmeterWinIpNode01    
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      KeyName: "us-west-2-kp-02"
+      Tags:
+      - Key: Name
+        Value: JMeter-Windows
+      InstanceType: !Ref InstanceType
+      ImageId: ami-03e68166e462a9c52
+      UserData:
+        Fn::Base64:
+          !Sub |
+            <powershell>
+            # Variables
+
+            $temp = "c:\temp\"
+            $link = "https://dlcdn.apache.org//jmeter/binaries/apache-jmeter-5.4.3.zip"
+            $file = Split-Path $link -leaf
+            $filename = [System.IO.Path]::GetFileNameWithoutExtension($file) 
+            # Write-Output $file
+            # Write-Output $filename
+            $silent = "/S"
+            $sleep = 30
+
+            # JMeter related variables
+
+            $company = "JMeter"
+            $product = "JMeter-5.2.3"
+            $product_path = "C:\Users\Administrator\Documents\$company\"
+
+
+            New-Item $temp -ItemType directory
+            cd $temp
+            Invoke-WebRequest -Uri $link -OutFile $file
+            Start-Sleep -s $sleep
+            Expand-Archive $file -DestinationPath $product_path
+            # Start-Process -FilePath $file -ArgumentList $silent
+            # Start-Sleep -s $sleep
+
+            # Install Java
+            $java_link = "https://javadl.oracle.com/webapps/download/AutoDL?BundleId=245479_4d5417147a92418ea8b615e228bb6935"
+            $java_path = "C:\Users\Administrator\Documents\$company\$filename"
+            $java_file = 'jre-8u311-windows-x64.exe'
+            cd $java_path
+            Invoke-WebRequest -Uri $java_link -Outfile $java_file
+            "INSTALL_SILENT=Enable" | Set-Content "$java_path/JavaInstallConfig.txt"
+            "INSTALLDIR=C:\java" | Add-Content "$java_path/JavaInstallConfig.txt"
+            "AUTO_UPDATE=Enable" | Add-Content "$java_path/JavaInstallConfig.txt"
+            "WEB_JAVA_SECURITY_LEVEL=VH" | Add-Content "$java_path/JavaInstallConfig.txt"
+            
+            Write-Output "Starting java install"
+            start-process $java_file INSTALLCFG=$java_path/JavaInstallConfig.txt -Wait
+            Write-Output "Completed java install"
+            # Clean up
+
+            # Start-Sleep -s $sleep
+            # Remove-Item $temp -Force -Recurse
+            </powershell>
+      NetworkInterfaces:
+      - DeviceIndex: '0'
+        NetworkInterfaceId: !Ref JmeterWinIpNode01
+
